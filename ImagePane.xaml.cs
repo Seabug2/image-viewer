@@ -18,8 +18,15 @@ public partial class ImagePane : UserControl
     private static readonly HashSet<string> ArchiveExtensions = new(StringComparer.OrdinalIgnoreCase) { ".zip", ".cbz" };
     private readonly List<ImageItem> _items = []; private readonly Queue<int> _shuffleBag = new(); private readonly Random _random = new();
     private readonly DispatcherTimer _timer = new(), _hideTimer = new() { Interval = TimeSpan.FromMilliseconds(900) };
-    private int _index = -1, _loadVersion; private bool _syncing, _rightDraggingSlider, _syncingPosition; private string? _sourcePath; private CancellationTokenSource? _animationCancellation;
+    private int _index = -1, _loadVersion; private bool _syncing, _rightDraggingSlider, _syncingPosition, _isActive = true; private string? _sourcePath; private CancellationTokenSource? _animationCancellation;
     public event Action<ImagePane, int>? SynchronizeIntervalRequested; public event Action<ImagePane, bool>? SynchronizeShuffleRequested;
+
+    public void SetActive(bool active)
+    {
+        if (_isActive == active) return; _isActive = active;
+        if (!active) { _timer.Stop(); _animationCancellation?.Cancel(); _loadVersion++; }
+        else if (_items.Count > 0) { ShowCurrent(); ApplyInterval(); }
+    }
 
     public ImagePane() { InitializeComponent(); _timer.Tick += (_, _) => Next(); _hideTimer.Tick += (_, _) => { _hideTimer.Stop(); BottomBar.Opacity = 0; }; }
     private async void Open_Click(object sender, RoutedEventArgs e) { var d = new OpenFileDialog { Title = "이미지 또는 ZIP/CBZ 열기", Filter = "지원 파일|*.jpg;*.jpeg;*.png;*.bmp;*.gif;*.tif;*.tiff;*.webp;*.zip;*.cbz|모든 파일|*.*", Multiselect = true }; if (d.ShowDialog() == true) await LoadPathsAsync(d.FileNames); }
@@ -38,7 +45,7 @@ public partial class ImagePane : UserControl
     }
     private void ApplyLoadedItems(string[] paths, List<ImageItem> loaded)
     {
-        _timer.Stop(); _animationCancellation?.Cancel(); Picture.Source = null; _items.Clear(); _items.AddRange(loaded); _sourcePath = ResolveSourcePath(paths); _index = 0; EmptyStatus.Visibility = Visibility.Collapsed;
+        _timer.Stop(); _animationCancellation?.Cancel(); Picture.Source = null; _items.Clear(); _items.AddRange(loaded); _sourcePath = ResolveSourcePath(paths); _index = 0; EmptyStatus.Visibility = Visibility.Collapsed; ClearButton.Visibility = Visibility.Visible;
         _syncingPosition = true; PositionSlider.Minimum = 1; PositionSlider.Maximum = Math.Max(1, _items.Count); PositionSlider.Value = 1; _syncingPosition = false; ResetShuffle(); ShowCurrent(); ApplyInterval();
     }
     private void ShowSkippingStatus(string destination) { _timer.Stop(); _animationCancellation?.Cancel(); Picture.Source = null; EmptyPanel.Visibility = Visibility.Visible; EmptyStatus.Visibility = Visibility.Visible; EmptyStatus.Text = $"지원되는 이미지를 찾지 못했습니다.\n{destination}"; Caption.Visibility = Visibility.Collapsed; BottomBar.Opacity = 0; }
@@ -63,7 +70,7 @@ public partial class ImagePane : UserControl
 
     private async void ShowCurrent()
     {
-        if (_index < 0 || _index >= _items.Count) return; _animationCancellation?.Cancel(); _animationCancellation?.Dispose(); _animationCancellation = new CancellationTokenSource(); var token = _animationCancellation.Token; var version = ++_loadVersion; var item = _items[_index];
+        if (!_isActive || _index < 0 || _index >= _items.Count) return; _animationCancellation?.Cancel(); _animationCancellation?.Dispose(); _animationCancellation = new CancellationTokenSource(); var token = _animationCancellation.Token; var version = ++_loadVersion; var item = _items[_index];
         _syncingPosition = true; PositionSlider.Value = _index + 1; PositionText.Text = $"{_index + 1} / {_items.Count}"; _syncingPosition = false; Caption.Visibility = Visibility.Visible; CaptionText.Text = $"불러오는 중…   {item.Name}";
         try
         {
@@ -114,7 +121,7 @@ public partial class ImagePane : UserControl
     private void Previous() { if (_items.Count == 0) return; _index = (_index - 1 + _items.Count) % _items.Count; ShowCurrent(); }
     private void ResetShuffle() { _shuffleBag.Clear(); foreach (var i in Enumerable.Range(0, _items.Count).Where(i => i != _index).OrderBy(_ => _random.Next())) _shuffleBag.Enqueue(i); if (_items.Count == 1) _shuffleBag.Enqueue(0); }
     private void RemoveFromShuffleBag(int index) { if (_shuffleBag.Count == 0) return; var remaining = _shuffleBag.Where(i => i != index).ToArray(); _shuffleBag.Clear(); foreach (var i in remaining) _shuffleBag.Enqueue(i); }
-    private void ApplyInterval() { var seconds = (int)IntervalSlider.Value; _timer.Stop(); if (seconds > 0 && _items.Count > 1) { _timer.Interval = TimeSpan.FromSeconds(seconds); _timer.Start(); } }
+    private void ApplyInterval() { var seconds = (int)IntervalSlider.Value; _timer.Stop(); if (_isActive && seconds > 0 && _items.Count > 1) { _timer.Interval = TimeSpan.FromSeconds(seconds); _timer.Start(); } }
     private void Interval_Changed(object sender, RoutedPropertyChangedEventArgs<double> e) { if (_syncing || SecondsBox == null) return; _syncing = true; SecondsBox.Text = ((int)e.NewValue).ToString(); _syncing = false; ApplyInterval(); }
     private void SetSeconds(int value) { _syncing = true; value = Math.Clamp(value, 0, 60); IntervalSlider.Value = value; SecondsBox.Text = value.ToString(); _syncing = false; ApplyInterval(); }
     public void SetSecondsFromSynchronization(int value) => SetSeconds(value);
@@ -133,6 +140,13 @@ public partial class ImagePane : UserControl
     public void SetShuffleFromSynchronization(bool enabled) => ShuffleToggle.IsChecked = enabled;
     private void Position_Changed(object sender, RoutedPropertyChangedEventArgs<double> e) { if (_syncingPosition || _items.Count == 0) return; var selected = Math.Clamp((int)Math.Round(e.NewValue) - 1, 0, _items.Count - 1); if (selected == _index) return; _index = selected; if (ShuffleToggle.IsChecked == true) RemoveFromShuffleBag(_index); ShowCurrent(); }
     private void Next_Click(object sender, RoutedEventArgs e) => Next(); private void Previous_Click(object sender, RoutedEventArgs e) => Previous();
+    private void Clear_Click(object sender, RoutedEventArgs e)
+    {
+        _timer.Stop(); _animationCancellation?.Cancel(); _animationCancellation?.Dispose(); _animationCancellation = null; _loadVersion++;
+        _items.Clear(); _shuffleBag.Clear(); _index = -1; _sourcePath = null; Picture.Source = null;
+        EmptyPanel.Visibility = Visibility.Visible; EmptyStatus.Visibility = Visibility.Collapsed; Caption.Visibility = Visibility.Collapsed; ClearButton.Visibility = Visibility.Collapsed; BottomBar.Opacity = 0;
+        _syncingPosition = true; PositionSlider.Minimum = 1; PositionSlider.Maximum = 1; PositionSlider.Value = 1; PositionText.Text = "0 / 0"; _syncingPosition = false;
+    }
     private async void PreviousSource_RightClick(object sender, MouseButtonEventArgs e) { e.Handled = true; await MoveSourceAsync(-1); } private async void NextSource_RightClick(object sender, MouseButtonEventArgs e) { e.Handled = true; await MoveSourceAsync(1); }
     private async Task MoveSourceAsync(int direction)
     {
