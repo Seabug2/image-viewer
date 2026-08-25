@@ -135,6 +135,7 @@ public partial class ImagePane : UserControl
 
     private void Next() { if (_items.Count == 0) return; if (ShuffleToggle.IsChecked == true) { if (_shuffleBag.Count == 0) ResetShuffle(); _index = _shuffleBag.Dequeue(); } else _index = (_index + 1) % _items.Count; ShowCurrent(); }
     private void Previous() { if (_items.Count == 0) return; _index = (_index - 1 + _items.Count) % _items.Count; ShowCurrent(); }
+    private void Pane_PreviewMouseWheel(object sender, MouseWheelEventArgs e) { if (_items.Count == 0) return; if (e.Delta > 0) Previous(); else if (e.Delta < 0) Next(); e.Handled = true; }
     private void ResetShuffle() { _shuffleBag.Clear(); foreach (var i in Enumerable.Range(0, _items.Count).Where(i => i != _index).OrderBy(_ => _random.Next())) _shuffleBag.Enqueue(i); if (_items.Count == 1) _shuffleBag.Enqueue(0); }
     private void RemoveFromShuffleBag(int index) { if (_shuffleBag.Count == 0) return; var remaining = _shuffleBag.Where(i => i != index).ToArray(); _shuffleBag.Clear(); foreach (var i in remaining) _shuffleBag.Enqueue(i); }
     private void ApplyInterval() { var seconds = (int)IntervalSlider.Value; _timer.Stop(); if (_isActive && seconds > 0 && _items.Count > 1) { _timer.Interval = TimeSpan.FromSeconds(seconds); _timer.Start(); } }

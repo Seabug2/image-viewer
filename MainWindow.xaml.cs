@@ -10,7 +10,6 @@ namespace ImageViewer;
 public partial class MainWindow : Window
 {
     private readonly ImagePane[] _panes = Enumerable.Range(0, 6).Select(_ => new ImagePane()).ToArray();
-    private static readonly int[] MultiDropPaneOrder = [0, 1, 2, 3, 5];
     private readonly System.Windows.Threading.DispatcherTimer _hideTimer = new() { Interval = TimeSpan.FromMilliseconds(900) };
     private bool _fullscreen; private WindowState _stateBeforeFullscreen; private Rect _boundsBeforeFullscreen;
     public MainWindow()
@@ -56,9 +55,8 @@ public partial class MainWindow : Window
         if (start < 0) return;
 
         e.Handled = true;
-        var destinations = start == 4 ? new[] { 4, 5 } : MultiDropPaneOrder.Where(index => index >= start).ToArray();
-        var assignable = Math.Min(paths.Length, destinations.Length);
-        for (int offset = 0; offset < assignable; offset++) await _panes[destinations[offset]].LoadPathsAsync([paths[offset]]);
+        var assignable = Math.Min(paths.Length, _panes.Length - start);
+        for (int offset = 0; offset < assignable; offset++) await _panes[start + offset].LoadPathsAsync([paths[offset]]);
     }
     private int FindPaneAt(DragEventArgs e)
     {
