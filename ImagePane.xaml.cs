@@ -45,7 +45,7 @@ public partial class ImagePane : UserControl
     }
     private void ApplyLoadedItems(string[] paths, List<ImageItem> loaded)
     {
-        _timer.Stop(); _animationCancellation?.Cancel(); Picture.Source = null; _items.Clear(); _items.AddRange(loaded); _sourcePath = ResolveSourcePath(paths); _index = 0; EmptyStatus.Visibility = Visibility.Collapsed; ClearButton.Visibility = Visibility.Visible;
+        _timer.Stop(); _animationCancellation?.Cancel(); Picture.Source = null; _items.Clear(); _items.AddRange(loaded); _sourcePath = ResolveSourcePath(paths); _index = 0; EmptyStatus.Visibility = Visibility.Collapsed; ClearButton.Visibility = Visibility.Visible; ClearButton.Opacity = 0; ClearButton.IsHitTestVisible = false;
         _syncingPosition = true; PositionSlider.Minimum = 1; PositionSlider.Maximum = Math.Max(1, _items.Count); PositionSlider.Value = 1; _syncingPosition = false; ResetShuffle(); ShowCurrent(); ApplyInterval();
     }
     private void ShowSkippingStatus(string destination) { _timer.Stop(); _animationCancellation?.Cancel(); Picture.Source = null; EmptyPanel.Visibility = Visibility.Visible; EmptyStatus.Visibility = Visibility.Visible; EmptyStatus.Text = $"지원되는 이미지를 찾지 못했습니다.\n{destination}"; Caption.Visibility = Visibility.Collapsed; BottomBar.Opacity = 0; }
@@ -144,7 +144,7 @@ public partial class ImagePane : UserControl
     {
         _timer.Stop(); _animationCancellation?.Cancel(); _animationCancellation?.Dispose(); _animationCancellation = null; _loadVersion++;
         _items.Clear(); _shuffleBag.Clear(); _index = -1; _sourcePath = null; Picture.Source = null;
-        EmptyPanel.Visibility = Visibility.Visible; EmptyStatus.Visibility = Visibility.Collapsed; Caption.Visibility = Visibility.Collapsed; ClearButton.Visibility = Visibility.Collapsed; BottomBar.Opacity = 0;
+        EmptyPanel.Visibility = Visibility.Visible; EmptyStatus.Visibility = Visibility.Collapsed; Caption.Visibility = Visibility.Collapsed; ClearButton.Visibility = Visibility.Collapsed; ClearButton.Opacity = 0; ClearButton.IsHitTestVisible = false; BottomBar.Opacity = 0;
         _syncingPosition = true; PositionSlider.Minimum = 1; PositionSlider.Maximum = 1; PositionSlider.Value = 1; PositionText.Text = "0 / 0"; _syncingPosition = false;
     }
     private async void PreviousSource_RightClick(object sender, MouseButtonEventArgs e) { e.Handled = true; await MoveSourceAsync(-1); } private async void NextSource_RightClick(object sender, MouseButtonEventArgs e) { e.Handled = true; await MoveSourceAsync(1); }
@@ -161,8 +161,14 @@ public partial class ImagePane : UserControl
         if (_items.Count > 0) { EmptyStatus.Visibility = Visibility.Collapsed; ShowCurrent(); ApplyInterval(); } else { EmptyStatus.Text = "지원되는 이미지를 포함한 다른 폴더나 ZIP/CBZ가 없습니다."; _syncingPosition = true; PositionSlider.Minimum = 1; PositionSlider.Maximum = 1; PositionSlider.Value = 1; PositionText.Text = "0 / 0"; _syncingPosition = false; }
         MessageBox.Show("지원되는 이미지를 포함한 다른 폴더나 압축파일이 없습니다.", "Image Viewer", MessageBoxButton.OK, MessageBoxImage.Information);
     }
-    private void Pane_MouseMove(object sender, MouseEventArgs e) { var y = e.GetPosition(this).Y; Caption.Opacity = y < 85 ? 1 : 0; if (y > ActualHeight - 115) { BottomBar.Opacity = 1; _hideTimer.Stop(); } else if (BottomBar.Opacity > 0 && !_hideTimer.IsEnabled) _hideTimer.Start(); }
-    private void Pane_MouseLeave(object sender, MouseEventArgs e) { _hideTimer.Stop(); BottomBar.Opacity = 0; Caption.Opacity = 0; DropHint.Visibility = Visibility.Collapsed; }
+    private void Pane_MouseMove(object sender, MouseEventArgs e)
+    {
+        var point = e.GetPosition(this); var y = point.Y; Caption.Opacity = y < 85 ? 1 : 0;
+        var showClear = _items.Count > 0 && y < 90 && point.X > ActualWidth - 90;
+        ClearButton.Opacity = showClear ? 1 : 0; ClearButton.IsHitTestVisible = showClear;
+        if (y > ActualHeight - 115) { BottomBar.Opacity = 1; _hideTimer.Stop(); } else if (BottomBar.Opacity > 0 && !_hideTimer.IsEnabled) _hideTimer.Start();
+    }
+    private void Pane_MouseLeave(object sender, MouseEventArgs e) { _hideTimer.Stop(); BottomBar.Opacity = 0; Caption.Opacity = 0; ClearButton.Opacity = 0; ClearButton.IsHitTestVisible = false; DropHint.Visibility = Visibility.Collapsed; }
     private void Pane_SizeChanged(object sender, SizeChangedEventArgs e)
     {
         if (IntervalMinLabel == null) return;
