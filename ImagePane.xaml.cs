@@ -32,6 +32,12 @@ public partial class ImagePane : UserControl
     private async void Open_Click(object sender, RoutedEventArgs e) { var d = new OpenFileDialog { Title = "이미지 또는 ZIP/CBZ 열기", Filter = "지원 파일|*.jpg;*.jpeg;*.png;*.bmp;*.gif;*.tif;*.tiff;*.webp;*.zip;*.cbz|모든 파일|*.*", Multiselect = true }; if (d.ShowDialog() == true) await LoadPathsAsync(d.FileNames); }
     private async void OnDrop(object sender, DragEventArgs e) { DropHint.Visibility = Visibility.Collapsed; if (e.Data.GetDataPresent(DataFormats.FileDrop) && e.Data.GetData(DataFormats.FileDrop) is string[] paths) await LoadPathsAsync(paths); }
     private void OnDragEnter(object sender, DragEventArgs e) { e.Effects = e.Data.GetDataPresent(DataFormats.FileDrop) ? DragDropEffects.Copy : DragDropEffects.None; DropHint.Visibility = e.Effects == DragDropEffects.Copy ? Visibility.Visible : Visibility.Collapsed; e.Handled = true; }
+    private void OnDragLeave(object sender, DragEventArgs e)
+    {
+        var point = e.GetPosition(this);
+        if (point.X <= 0 || point.Y <= 0 || point.X >= ActualWidth || point.Y >= ActualHeight) DropHint.Visibility = Visibility.Collapsed;
+        e.Handled = true;
+    }
 
     public async Task LoadPathsAsync(IEnumerable<string> paths)
     {
