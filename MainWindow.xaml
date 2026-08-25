@@ -5,7 +5,7 @@
     <Grid x:Name="PaneGrid"/>
     <Border x:Name="LayoutBar" VerticalAlignment="Top" HorizontalAlignment="Center" Margin="0,10,0,0" Padding="5" CornerRadius="12" Background="#E622252B" Opacity="0" Panel.ZIndex="10">
       <StackPanel Orientation="Horizontal">
-        <Button Content="1" Click="Layout_Click" Tag="1" ToolTip="1화면" Margin="2"/><Button Content="2" Click="Layout_Click" Tag="2" ToolTip="2분할" Margin="2"/><Button Content="3" Click="Layout_Click" Tag="3" ToolTip="3분할 (3열 × 1행)" Margin="2"/><Button Content="4" Click="Layout_Click" Tag="4" ToolTip="4분할" Margin="2"/><Button Content="6" Click="Layout_Click" Tag="6" ToolTip="6분할 (3열 × 2행)" Margin="2"/>
+        <Button Content="1" Click="Layout_Click" Tag="1" ToolTip="1화면" Margin="2"/><Button Content="2" Click="Layout_Click" Tag="2" ToolTip="2분할" Margin="2"/><Button Content="3" Click="Layout_Click" Tag="3" ToolTip="3분할 (3열 × 1행)" Margin="2"/><Button Content="4" Click="Layout_Click" Tag="4" ToolTip="4분할" Margin="2"/><Button Content="6" Click="Layout_Click" Tag="6" ToolTip="6분할 (3열 × 2행)" Margin="2"/><Button Content="8" Click="Layout_Click" Tag="8" ToolTip="8분할 (4열 × 2행)" Margin="2"/>
         <Border Width="1" Background="#626873" Margin="6,4"/><Button x:Name="FullscreenButton" Content="⛶" Click="Fullscreen_Click" ToolTip="현재 디스플레이 테두리 없는 전체화면" Margin="2"/>
       </StackPanel>
     </Border>

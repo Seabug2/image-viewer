@@ -9,7 +9,7 @@ namespace ImageViewer;
 
 public partial class MainWindow : Window
 {
-    private readonly ImagePane[] _panes = Enumerable.Range(0, 6).Select(_ => new ImagePane()).ToArray();
+    private readonly ImagePane[] _panes = Enumerable.Range(0, 8).Select(_ => new ImagePane()).ToArray();
     private readonly System.Windows.Threading.DispatcherTimer _hideTimer = new() { Interval = TimeSpan.FromMilliseconds(900) };
     private bool _fullscreen; private WindowState _stateBeforeFullscreen; private Rect _boundsBeforeFullscreen;
     public MainWindow()
@@ -24,7 +24,7 @@ public partial class MainWindow : Window
     private void SetLayout(int count)
     {
         for (int i = count; i < _panes.Length; i++) _panes[i].SetActive(false);
-        PaneGrid.Children.Clear(); PaneGrid.RowDefinitions.Clear(); PaneGrid.ColumnDefinitions.Clear(); int rows = count is 4 or 6 ? 2 : 1; int cols = count switch { 1 => 1, 2 or 4 => 2, 3 or 6 => 3, _ => 1 };
+        PaneGrid.Children.Clear(); PaneGrid.RowDefinitions.Clear(); PaneGrid.ColumnDefinitions.Clear(); int rows = count is 4 or 6 or 8 ? 2 : 1; int cols = count switch { 1 => 1, 2 or 4 => 2, 3 or 6 => 3, 8 => 4, _ => 1 };
         for (int i = 0; i < rows; i++) PaneGrid.RowDefinitions.Add(new RowDefinition()); for (int i = 0; i < cols; i++) PaneGrid.ColumnDefinitions.Add(new ColumnDefinition());
         for (int i = 0; i < count; i++) { PaneGrid.Children.Add(_panes[i]); Grid.SetRow(_panes[i], i / cols); Grid.SetColumn(_panes[i], i % cols); }
         PaneGrid.UpdateLayout();
