@@ -3,6 +3,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Runtime.InteropServices;
+using System.IO;
 
 namespace ImageViewer;
 
@@ -46,7 +47,29 @@ public partial class MainWindow : Window
         var point = e.GetPosition(this);
         if (point.X <= 0 || point.Y <= 0 || point.X >= ActualWidth || point.Y >= ActualHeight) ClearAllDropHints();
     }
-    private void Window_PreviewDrop(object sender, DragEventArgs e) => ClearAllDropHints();
+    private async void Window_PreviewDrop(object sender, DragEventArgs e)
+    {
+        ClearAllDropHints();
+        if (!e.Data.GetDataPresent(DataFormats.FileDrop) || e.Data.GetData(DataFormats.FileDrop) is not string[] paths || paths.Length < 2 || !paths.All(IsContainerPath)) return;
+        var start = FindPaneAt(e);
+        if (start < 0) return;
+
+        e.Handled = true;
+        var assignable = Math.Min(paths.Length, _panes.Length - start);
+        for (int offset = 0; offset < assignable; offset++) await _panes[start + offset].LoadPathsAsync([paths[offset]]);
+    }
+    private int FindPaneAt(DragEventArgs e)
+    {
+        for (int i = 0; i < _panes.Length; i++)
+        {
+            var pane = _panes[i];
+            if (!pane.IsVisible) continue;
+            var point = e.GetPosition(pane);
+            if (point.X >= 0 && point.Y >= 0 && point.X < pane.ActualWidth && point.Y < pane.ActualHeight) return i;
+        }
+        return -1;
+    }
+    private static bool IsContainerPath(string path) => Directory.Exists(path) || (File.Exists(path) && (Path.GetExtension(path).Equals(".zip", StringComparison.OrdinalIgnoreCase) || Path.GetExtension(path).Equals(".cbz", StringComparison.OrdinalIgnoreCase)));
     private void ClearAllDropHints() { foreach (var pane in _panes) pane.SetDropHintActive(false); }
     private void Fullscreen_Click(object sender, RoutedEventArgs e)
     {
