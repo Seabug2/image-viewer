@@ -14,11 +14,12 @@ public partial class MainWindow : Window
     private bool _fullscreen; private WindowState _stateBeforeFullscreen; private Rect _boundsBeforeFullscreen;
     public MainWindow()
     {
-        InitializeComponent(); foreach (var pane in _panes) { pane.SynchronizeIntervalRequested += SynchronizeIntervals; pane.SynchronizeShuffleRequested += SynchronizeShuffle; }
+        InitializeComponent(); foreach (var pane in _panes) { pane.SynchronizeIntervalRequested += SynchronizeIntervals; pane.SynchronizeShuffleRequested += SynchronizeShuffle; pane.NavigateAllRequested += NavigateAllPanes; }
         _hideTimer.Tick += (_, _) => { _hideTimer.Stop(); LayoutBar.Opacity = 0; }; SetLayout(1);
     }
     private void SynchronizeIntervals(ImagePane source, int seconds) { foreach (var pane in _panes) if (!ReferenceEquals(pane, source)) pane.SetSecondsFromSynchronization(seconds); }
     private void SynchronizeShuffle(ImagePane source, bool enabled) { foreach (var pane in _panes) if (!ReferenceEquals(pane, source)) pane.SetShuffleFromSynchronization(enabled); }
+    private void NavigateAllPanes(ImagePane source, int direction) { foreach (var pane in _panes) pane.NavigateFromSynchronization(direction); }
     public Task OpenPathsAsync(IEnumerable<string> paths) => _panes[0].LoadPathsAsync(paths);
     private void SetLayout(int count)
     {

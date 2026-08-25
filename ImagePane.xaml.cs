@@ -19,7 +19,7 @@ public partial class ImagePane : UserControl
     private readonly List<ImageItem> _items = []; private readonly Queue<int> _shuffleBag = new(); private readonly Random _random = new();
     private readonly DispatcherTimer _timer = new(), _hideTimer = new() { Interval = TimeSpan.FromMilliseconds(900) };
     private int _index = -1, _loadVersion; private bool _syncing, _rightDraggingSlider, _syncingPosition, _isActive = true, _transitionInProgress; private string? _sourcePath; private CancellationTokenSource? _animationCancellation;
-    public event Action<ImagePane, int>? SynchronizeIntervalRequested; public event Action<ImagePane, bool>? SynchronizeShuffleRequested;
+    public event Action<ImagePane, int>? SynchronizeIntervalRequested; public event Action<ImagePane, bool>? SynchronizeShuffleRequested; public event Action<ImagePane, int>? NavigateAllRequested;
     public void SetDropHintActive(bool active) => DropHint.Visibility = active ? Visibility.Visible : Visibility.Collapsed;
 
     public void SetActive(bool active)
@@ -137,6 +137,7 @@ public partial class ImagePane : UserControl
 
     private void Next() { if (_items.Count == 0) return; if (ShuffleToggle.IsChecked == true) { if (_shuffleBag.Count == 0) ResetShuffle(); _index = _shuffleBag.Dequeue(); } else _index = (_index + 1) % _items.Count; ShowCurrent(1); }
     private void Previous() { if (_items.Count == 0) return; _index = (_index - 1 + _items.Count) % _items.Count; ShowCurrent(-1); }
+    public void NavigateFromSynchronization(int direction) { if (!_isActive) return; if (direction < 0) Previous(); else Next(); }
     private void SkipUnreadableCurrent(int direction, string failedName)
     {
         _timer.Stop(); _transitionInProgress = false; var failedIndex = _index; _items.RemoveAt(failedIndex);
@@ -171,7 +172,8 @@ public partial class ImagePane : UserControl
     private void Shuffle_RightClick(object sender, MouseButtonEventArgs e) { e.Handled = true; ShuffleToggle.IsChecked = ShuffleToggle.IsChecked != true; SynchronizeShuffleRequested?.Invoke(this, ShuffleToggle.IsChecked == true); }
     public void SetShuffleFromSynchronization(bool enabled) => ShuffleToggle.IsChecked = enabled;
     private void Position_Changed(object sender, RoutedPropertyChangedEventArgs<double> e) { if (_syncingPosition || _items.Count == 0) return; var selected = Math.Clamp((int)Math.Round(e.NewValue) - 1, 0, _items.Count - 1); if (selected == _index) return; _index = selected; if (ShuffleToggle.IsChecked == true) RemoveFromShuffleBag(_index); ShowCurrent(); }
-    private void Next_Click(object sender, RoutedEventArgs e) => Next(); private void Previous_Click(object sender, RoutedEventArgs e) => Previous();
+    private void Next_Click(object sender, RoutedEventArgs e) { if ((Keyboard.Modifiers & ModifierKeys.Control) != 0) NavigateAllRequested?.Invoke(this, 1); else Next(); }
+    private void Previous_Click(object sender, RoutedEventArgs e) { if ((Keyboard.Modifiers & ModifierKeys.Control) != 0) NavigateAllRequested?.Invoke(this, -1); else Previous(); }
     private void Clear_Click(object sender, RoutedEventArgs e)
     {
         _timer.Stop(); _animationCancellation?.Cancel(); _animationCancellation?.Dispose(); _animationCancellation = null; _loadVersion++;
