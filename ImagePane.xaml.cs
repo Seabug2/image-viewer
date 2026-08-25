@@ -44,16 +44,25 @@ public partial class ImagePane : UserControl
     {
         try
         {
-            var pathList = paths.ToArray(); var loaded = await Task.Run(() => ReadItems(pathList));
+            var pathList = paths.ToArray(); var initialIndex = 0;
+            var loaded = await Task.Run(() =>
+            {
+                if (pathList.Length != 1 || !File.Exists(pathList[0]) || !IsImage(pathList[0])) return ReadItems(pathList);
+                var selected = Path.GetFullPath(pathList[0]); var directory = Path.GetDirectoryName(selected);
+                if (directory == null) return ReadItems(pathList);
+                var siblings = Directory.EnumerateFiles(directory, "*", SearchOption.TopDirectoryOnly).Where(IsImage).OrderBy(NaturalKey, StringComparer.CurrentCultureIgnoreCase).ToList();
+                initialIndex = Math.Max(0, siblings.FindIndex(file => string.Equals(Path.GetFullPath(file), selected, StringComparison.OrdinalIgnoreCase)));
+                return siblings.Select(file => new ImageItem(Path.GetFileName(file), file)).ToList();
+            });
             if (loaded.Count == 0) { _sourcePath = ResolveSourcePath(pathList); _items.Clear(); _index = -1; ShowSkippingStatus("다음 ZIP/CBZ 또는 폴더로 이동합니다…"); await MoveSourceAsync(1); return; }
-            ApplyLoadedItems(pathList, loaded);
+            ApplyLoadedItems(pathList, loaded, initialIndex);
         }
         catch (Exception ex) { MessageBox.Show($"파일을 열 수 없습니다.\n\n{ex.Message}", "Image Viewer", MessageBoxButton.OK, MessageBoxImage.Error); }
     }
-    private void ApplyLoadedItems(string[] paths, List<ImageItem> loaded)
+    private void ApplyLoadedItems(string[] paths, List<ImageItem> loaded, int initialIndex = 0)
     {
-        _timer.Stop(); _animationCancellation?.Cancel(); Picture.Source = null; _items.Clear(); _items.AddRange(loaded); _sourcePath = ResolveSourcePath(paths); _index = 0; EmptyStatus.Visibility = Visibility.Collapsed; ClearButton.Visibility = Visibility.Visible; ClearButton.Opacity = 0; ClearButton.IsHitTestVisible = false;
-        _syncingPosition = true; PositionSlider.Minimum = 1; PositionSlider.Maximum = Math.Max(1, _items.Count); PositionSlider.Value = 1; _syncingPosition = false; ResetShuffle(); ShowCurrent(); ApplyInterval();
+        _timer.Stop(); _animationCancellation?.Cancel(); Picture.Source = null; _items.Clear(); _items.AddRange(loaded); _sourcePath = ResolveSourcePath(paths); _index = Math.Clamp(initialIndex, 0, _items.Count - 1); EmptyStatus.Visibility = Visibility.Collapsed; ClearButton.Visibility = Visibility.Visible; ClearButton.Opacity = 0; ClearButton.IsHitTestVisible = false;
+        _syncingPosition = true; PositionSlider.Minimum = 1; PositionSlider.Maximum = Math.Max(1, _items.Count); PositionSlider.Value = _index + 1; _syncingPosition = false; ResetShuffle(); ShowCurrent(); ApplyInterval();
     }
     private void ShowSkippingStatus(string destination) { _timer.Stop(); _animationCancellation?.Cancel(); Picture.Source = null; EmptyPanel.Visibility = Visibility.Visible; EmptyStatus.Visibility = Visibility.Visible; EmptyStatus.Text = $"지원되는 이미지를 찾지 못했습니다.\n{destination}"; Caption.Visibility = Visibility.Collapsed; BottomBar.Opacity = 0; }
     private static List<ImageItem> ReadItems(IEnumerable<string> paths)

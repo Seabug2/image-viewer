@@ -10,6 +10,7 @@ namespace ImageViewer;
 public partial class MainWindow : Window
 {
     private readonly ImagePane[] _panes = Enumerable.Range(0, 6).Select(_ => new ImagePane()).ToArray();
+    private static readonly int[] MultiDropPaneOrder = [0, 1, 2, 3, 5];
     private readonly System.Windows.Threading.DispatcherTimer _hideTimer = new() { Interval = TimeSpan.FromMilliseconds(900) };
     private bool _fullscreen; private WindowState _stateBeforeFullscreen; private Rect _boundsBeforeFullscreen;
     public MainWindow()
@@ -50,13 +51,14 @@ public partial class MainWindow : Window
     private async void Window_PreviewDrop(object sender, DragEventArgs e)
     {
         ClearAllDropHints();
-        if (!e.Data.GetDataPresent(DataFormats.FileDrop) || e.Data.GetData(DataFormats.FileDrop) is not string[] paths || paths.Length < 2 || !paths.All(IsContainerPath)) return;
+        if (!e.Data.GetDataPresent(DataFormats.FileDrop) || e.Data.GetData(DataFormats.FileDrop) is not string[] paths || paths.Length < 2 || !paths.All(IsAssignableSourcePath)) return;
         var start = FindPaneAt(e);
         if (start < 0) return;
 
         e.Handled = true;
-        var assignable = Math.Min(paths.Length, _panes.Length - start);
-        for (int offset = 0; offset < assignable; offset++) await _panes[start + offset].LoadPathsAsync([paths[offset]]);
+        var destinations = start == 4 ? new[] { 4, 5 } : MultiDropPaneOrder.Where(index => index >= start).ToArray();
+        var assignable = Math.Min(paths.Length, destinations.Length);
+        for (int offset = 0; offset < assignable; offset++) await _panes[destinations[offset]].LoadPathsAsync([paths[offset]]);
     }
     private int FindPaneAt(DragEventArgs e)
     {
@@ -69,7 +71,17 @@ public partial class MainWindow : Window
         }
         return -1;
     }
-    private static bool IsContainerPath(string path) => Directory.Exists(path) || (File.Exists(path) && (Path.GetExtension(path).Equals(".zip", StringComparison.OrdinalIgnoreCase) || Path.GetExtension(path).Equals(".cbz", StringComparison.OrdinalIgnoreCase)));
+    private static bool IsAssignableSourcePath(string path)
+    {
+        if (Directory.Exists(path)) return true;
+        if (!File.Exists(path)) return false;
+        var extension = Path.GetExtension(path);
+        return extension.Equals(".zip", StringComparison.OrdinalIgnoreCase) || extension.Equals(".cbz", StringComparison.OrdinalIgnoreCase)
+            || extension.Equals(".jpg", StringComparison.OrdinalIgnoreCase) || extension.Equals(".jpeg", StringComparison.OrdinalIgnoreCase)
+            || extension.Equals(".png", StringComparison.OrdinalIgnoreCase) || extension.Equals(".bmp", StringComparison.OrdinalIgnoreCase)
+            || extension.Equals(".gif", StringComparison.OrdinalIgnoreCase) || extension.Equals(".tif", StringComparison.OrdinalIgnoreCase)
+            || extension.Equals(".tiff", StringComparison.OrdinalIgnoreCase) || extension.Equals(".webp", StringComparison.OrdinalIgnoreCase);
+    }
     private void ClearAllDropHints() { foreach (var pane in _panes) pane.SetDropHintActive(false); }
     private void Fullscreen_Click(object sender, RoutedEventArgs e)
     {
