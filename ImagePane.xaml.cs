@@ -61,10 +61,10 @@ public partial class ImagePane : UserControl
     }
     private void ApplyLoadedItems(string[] paths, List<ImageItem> loaded, int initialIndex = 0)
     {
-        _timer.Stop(); _animationCancellation?.Cancel(); Picture.Source = null; _items.Clear(); _items.AddRange(loaded); _sourcePath = ResolveSourcePath(paths); _index = Math.Clamp(initialIndex, 0, _items.Count - 1); EmptyStatus.Visibility = Visibility.Collapsed; ClearButton.Visibility = Visibility.Visible; ClearButton.Opacity = 0; ClearButton.IsHitTestVisible = false;
+        _timer.Stop(); _animationCancellation?.Cancel(); Picture.Source = null; BackgroundPicture.Source = null; _items.Clear(); _items.AddRange(loaded); _sourcePath = ResolveSourcePath(paths); _index = Math.Clamp(initialIndex, 0, _items.Count - 1); EmptyStatus.Visibility = Visibility.Collapsed; ClearButton.Visibility = Visibility.Visible; ClearButton.Opacity = 0; ClearButton.IsHitTestVisible = false;
         _syncingPosition = true; PositionSlider.Minimum = 1; PositionSlider.Maximum = Math.Max(1, _items.Count); PositionSlider.Value = _index + 1; _syncingPosition = false; ResetShuffle(); ShowCurrent(); ApplyInterval();
     }
-    private void ShowSkippingStatus(string destination) { _timer.Stop(); _animationCancellation?.Cancel(); Picture.Source = null; EmptyPanel.Visibility = Visibility.Visible; EmptyStatus.Visibility = Visibility.Visible; EmptyStatus.Text = $"지원되는 이미지를 찾지 못했습니다.\n{destination}"; Caption.Visibility = Visibility.Collapsed; BottomBar.Opacity = 0; }
+    private void ShowSkippingStatus(string destination) { _timer.Stop(); _animationCancellation?.Cancel(); Picture.Source = null; BackgroundPicture.Source = null; EmptyPanel.Visibility = Visibility.Visible; EmptyStatus.Visibility = Visibility.Visible; EmptyStatus.Text = $"지원되는 이미지를 찾지 못했습니다.\n{destination}"; Caption.Visibility = Visibility.Collapsed; BottomBar.Opacity = 0; }
     private static List<ImageItem> ReadItems(IEnumerable<string> paths)
     {
         var result = new List<ImageItem>();
@@ -86,7 +86,8 @@ public partial class ImagePane : UserControl
 
     private async void ShowCurrent()
     {
-        if (!_isActive || _index < 0 || _index >= _items.Count) return; _animationCancellation?.Cancel(); _animationCancellation?.Dispose(); _animationCancellation = new CancellationTokenSource(); var token = _animationCancellation.Token; var version = ++_loadVersion; var item = _items[_index];
+        if (!_isActive || _index < 0 || _index >= _items.Count) return; _animationCancellation?.Cancel(); _animationCancellation?.Dispose(); _animationCancellation = new CancellationTokenSource(); var token = _animationCancellation.Token; var version = ++_loadVersion; var item = _items[_index]; BackgroundPicture.Source = null;
+        if (ActualWidth < 2 || ActualHeight < 2) { Picture.Source = null; BackgroundPicture.Source = null; return; }
         _syncingPosition = true; PositionSlider.Value = _index + 1; PositionText.Text = $"{_index + 1} / {_items.Count}"; _syncingPosition = false; Caption.Visibility = Visibility.Visible; CaptionText.Text = $"불러오는 중…   {item.Name}";
         try
         {
@@ -96,9 +97,9 @@ public partial class ImagePane : UserControl
                 var encoded = await Task.Run(() => ReadEncodedItem(item), token); var frameCount = await Task.Run(() => GetFrameCount(encoded), token);
                 if (frameCount > 1) { if (version != _loadVersion) return; EmptyPanel.Visibility = Visibility.Collapsed; _ = Task.Run(() => PlayAnimationSafe(encoded, targetWidth, version, token), token); return; }
             }
-            var bitmap = await Task.Run(() => DecodeBitmap(item, targetWidth)); if (version != _loadVersion) return; Picture.Source = bitmap; EmptyPanel.Visibility = Visibility.Collapsed; CaptionText.Text = $"{item.Name}   {_index + 1} / {_items.Count}";
+            var bitmap = await Task.Run(() => DecodeBitmap(item, targetWidth)); if (version != _loadVersion) return; Picture.Source = bitmap; BackgroundPicture.Source = bitmap; EmptyPanel.Visibility = Visibility.Collapsed; CaptionText.Text = $"{item.Name}   {_index + 1} / {_items.Count}";
         }
-        catch (Exception ex) { if (version != _loadVersion) return; _timer.Stop(); Picture.Source = null; EmptyPanel.Visibility = Visibility.Visible; CaptionText.Text = $"열기 실패: {item.Name} · {ex.Message}"; }
+        catch (Exception ex) { if (version != _loadVersion) return; _timer.Stop(); Picture.Source = null; BackgroundPicture.Source = null; EmptyPanel.Visibility = Visibility.Visible; CaptionText.Text = $"열기 실패: {item.Name} · {ex.Message}"; }
     }
     private static bool IsAnimationCandidate(ImageItem item) { var ext = Path.GetExtension(item.ArchiveEntry ?? item.FilePath ?? item.Name); return ext.Equals(".gif", StringComparison.OrdinalIgnoreCase) || ext.Equals(".webp", StringComparison.OrdinalIgnoreCase); }
     private static byte[] ReadEncodedItem(ImageItem item)
@@ -117,7 +118,7 @@ public partial class ImagePane : UserControl
             if (!Dispatcher.Invoke(() => IsVisible)) { if (token.WaitHandle.WaitOne(100)) return; frame--; continue; }
             var options = frame == 0 ? new SKCodecOptions(0) : new SKCodecOptions(frame, frame - 1); var result = codec.GetPixels(sourceInfo, decoded.GetPixels(), decoded.RowBytes, options); if (result != SKCodecResult.Success && result != SKCodecResult.IncompleteInput) throw new InvalidDataException($"애니메이션 프레임 디코딩 실패: {result}");
             using (var canvas = new SKCanvas(output)) { canvas.Clear(SKColors.Transparent); canvas.DrawBitmap(decoded, new SKRect(0, 0, outputWidth, outputHeight), new SKSamplingOptions(SKFilterMode.Linear), null); canvas.Flush(); }
-            var source = BitmapSource.Create(outputWidth, outputHeight, 96, 96, PixelFormats.Bgra32, null, output.GetPixels(), output.RowBytes * outputHeight, output.RowBytes); source.Freeze(); Dispatcher.Invoke(() => { if (version == _loadVersion && !token.IsCancellationRequested) Picture.Source = source; }); if (token.WaitHandle.WaitOne(Math.Clamp(frames[frame].Duration, 20, 10_000))) return;
+            var source = BitmapSource.Create(outputWidth, outputHeight, 96, 96, PixelFormats.Bgra32, null, output.GetPixels(), output.RowBytes * outputHeight, output.RowBytes); source.Freeze(); Dispatcher.Invoke(() => { if (version == _loadVersion && !token.IsCancellationRequested) { Picture.Source = source; BackgroundPicture.Source ??= source; } }); if (token.WaitHandle.WaitOne(Math.Clamp(frames[frame].Duration, 20, 10_000))) return;
         }
     }
     private void PlayAnimationSafe(byte[] encoded, int targetWidth, int version, CancellationToken token) { try { PlayAnimation(encoded, targetWidth, version, token); } catch (OperationCanceledException) { } catch (Exception ex) { Dispatcher.Invoke(() => { if (version != _loadVersion || token.IsCancellationRequested) return; _timer.Stop(); Caption.Visibility = Visibility.Visible; CaptionText.Text = $"애니메이션 재생 실패 · {ex.Message}"; }); } }
@@ -160,7 +161,7 @@ public partial class ImagePane : UserControl
     private void Clear_Click(object sender, RoutedEventArgs e)
     {
         _timer.Stop(); _animationCancellation?.Cancel(); _animationCancellation?.Dispose(); _animationCancellation = null; _loadVersion++;
-        _items.Clear(); _shuffleBag.Clear(); _index = -1; _sourcePath = null; Picture.Source = null;
+        _items.Clear(); _shuffleBag.Clear(); _index = -1; _sourcePath = null; Picture.Source = null; BackgroundPicture.Source = null;
         EmptyPanel.Visibility = Visibility.Visible; EmptyStatus.Visibility = Visibility.Collapsed; Caption.Visibility = Visibility.Collapsed; ClearButton.Visibility = Visibility.Collapsed; ClearButton.Opacity = 0; ClearButton.IsHitTestVisible = false; BottomBar.Opacity = 0;
         _syncingPosition = true; PositionSlider.Minimum = 1; PositionSlider.Maximum = 1; PositionSlider.Value = 1; PositionText.Text = "0 / 0"; _syncingPosition = false;
     }
