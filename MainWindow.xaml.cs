@@ -27,6 +27,27 @@ public partial class MainWindow : Window
         for (int i = 0; i < count; i++) { PaneGrid.Children.Add(_panes[i]); Grid.SetRow(_panes[i], i / cols); Grid.SetColumn(_panes[i], i % cols); }
     }
     private void Layout_Click(object sender, RoutedEventArgs e) => SetLayout(int.Parse((string)((Button)sender).Tag));
+    private void Window_PreviewDragOver(object sender, DragEventArgs e)
+    {
+        var acceptsFiles = e.Data.GetDataPresent(DataFormats.FileDrop);
+        foreach (var pane in _panes)
+        {
+            var isTarget = false;
+            if (acceptsFiles && pane.IsVisible)
+            {
+                var point = e.GetPosition(pane);
+                isTarget = point.X >= 0 && point.Y >= 0 && point.X < pane.ActualWidth && point.Y < pane.ActualHeight;
+            }
+            pane.SetDropHintActive(isTarget);
+        }
+    }
+    private void Window_PreviewDragLeave(object sender, DragEventArgs e)
+    {
+        var point = e.GetPosition(this);
+        if (point.X <= 0 || point.Y <= 0 || point.X >= ActualWidth || point.Y >= ActualHeight) ClearAllDropHints();
+    }
+    private void Window_PreviewDrop(object sender, DragEventArgs e) => ClearAllDropHints();
+    private void ClearAllDropHints() { foreach (var pane in _panes) pane.SetDropHintActive(false); }
     private void Fullscreen_Click(object sender, RoutedEventArgs e)
     {
         if (_fullscreen) { ExitFullscreen(); return; } var handle = new WindowInteropHelper(this).Handle; var monitor = MonitorFromWindow(handle, MonitorDefaultToNearest); var info = new MonitorInfo { Size = Marshal.SizeOf<MonitorInfo>() }; if (monitor == IntPtr.Zero || !GetMonitorInfo(monitor, ref info)) return;

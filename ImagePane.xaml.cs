@@ -20,6 +20,7 @@ public partial class ImagePane : UserControl
     private readonly DispatcherTimer _timer = new(), _hideTimer = new() { Interval = TimeSpan.FromMilliseconds(900) };
     private int _index = -1, _loadVersion; private bool _syncing, _rightDraggingSlider, _syncingPosition, _isActive = true; private string? _sourcePath; private CancellationTokenSource? _animationCancellation;
     public event Action<ImagePane, int>? SynchronizeIntervalRequested; public event Action<ImagePane, bool>? SynchronizeShuffleRequested;
+    public void SetDropHintActive(bool active) => DropHint.Visibility = active ? Visibility.Visible : Visibility.Collapsed;
 
     public void SetActive(bool active)
     {
