@@ -17,19 +17,29 @@ public partial class ImagePane : UserControl
     private static readonly HashSet<string> ImageExtensions = new(StringComparer.OrdinalIgnoreCase) { ".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tif", ".tiff", ".webp" };
     private static readonly HashSet<string> ArchiveExtensions = new(StringComparer.OrdinalIgnoreCase) { ".zip", ".cbz" };
     private readonly List<ImageItem> _items = []; private readonly Queue<int> _shuffleBag = new(); private readonly Random _random = new();
-    private readonly DispatcherTimer _timer = new(), _hideTimer = new() { Interval = TimeSpan.FromMilliseconds(900) };
+    private readonly DispatcherTimer _hideTimer = new() { Interval = TimeSpan.FromMilliseconds(900) };
     private int _index = -1, _loadVersion; private bool _syncing, _rightDraggingSlider, _syncingPosition, _isActive = true, _transitionInProgress; private string? _sourcePath; private CancellationTokenSource? _animationCancellation;
+    private SlideshowTransition? _slideshowTransition;
+    internal event Action? SlideshowStateChanged;
+    internal int SlideshowSeconds => _isActive && ActualWidth >= 2 && ActualHeight >= 2 && _items.Count > 1 ? (int)IntervalSlider.Value : 0;
+    internal bool IsSlideshowReady => !_transitionInProgress;
     public event Action<ImagePane, int>? SynchronizeIntervalRequested; public event Action<ImagePane, bool>? SynchronizeShuffleRequested; public event Action<ImagePane, int>? NavigateAllRequested;
     public void SetDropHintActive(bool active) => DropHint.Visibility = active ? Visibility.Visible : Visibility.Collapsed;
 
     public void SetActive(bool active)
     {
         if (_isActive == active) return; _isActive = active;
-        if (!active) { _timer.Stop(); _animationCancellation?.Cancel(); _loadVersion++; }
+        if (!active)
+        {
+            _animationCancellation?.Cancel();
+            _loadVersion++;
+            LeaveSlideshowTransition();
+            SlideshowStateChanged?.Invoke();
+        }
         else if (_items.Count > 0) ShowCurrent();
     }
 
-    public ImagePane() { InitializeComponent(); _timer.Tick += (_, _) => { _timer.Stop(); Next(); }; _hideTimer.Tick += (_, _) => { _hideTimer.Stop(); BottomBar.Opacity = 0; }; }
+    public ImagePane() { InitializeComponent(); _hideTimer.Tick += (_, _) => { _hideTimer.Stop(); BottomBar.Opacity = 0; }; }
     private async void Open_Click(object sender, RoutedEventArgs e) { var d = new OpenFileDialog { Title = "이미지 또는 ZIP/CBZ 열기", Filter = "지원 파일|*.jpg;*.jpeg;*.png;*.bmp;*.gif;*.tif;*.tiff;*.webp;*.zip;*.cbz|모든 파일|*.*", Multiselect = true }; if (d.ShowDialog() == true) await LoadPathsAsync(d.FileNames); }
     private async void OnDrop(object sender, DragEventArgs e) { DropHint.Visibility = Visibility.Collapsed; if (e.Data.GetDataPresent(DataFormats.FileDrop) && e.Data.GetData(DataFormats.FileDrop) is string[] paths) await LoadPathsAsync(paths); }
     private void OnDragEnter(object sender, DragEventArgs e) { e.Effects = e.Data.GetDataPresent(DataFormats.FileDrop) ? DragDropEffects.Copy : DragDropEffects.None; DropHint.Visibility = e.Effects == DragDropEffects.Copy ? Visibility.Visible : Visibility.Collapsed; e.Handled = true; }
@@ -61,10 +71,18 @@ public partial class ImagePane : UserControl
     }
     private void ApplyLoadedItems(string[] paths, List<ImageItem> loaded, int initialIndex = 0)
     {
-        _timer.Stop(); _animationCancellation?.Cancel(); _items.Clear(); _items.AddRange(loaded); _sourcePath = ResolveSourcePath(paths); _index = Math.Clamp(initialIndex, 0, _items.Count - 1); EmptyStatus.Visibility = Visibility.Collapsed; ClearButton.Visibility = Visibility.Visible; ClearButton.Opacity = 0; ClearButton.IsHitTestVisible = false;
+        _animationCancellation?.Cancel(); _items.Clear(); _items.AddRange(loaded); _sourcePath = ResolveSourcePath(paths); _index = Math.Clamp(initialIndex, 0, _items.Count - 1); EmptyStatus.Visibility = Visibility.Collapsed; ClearButton.Visibility = Visibility.Visible; ClearButton.Opacity = 0; ClearButton.IsHitTestVisible = false;
         _syncingPosition = true; PositionSlider.Minimum = 1; PositionSlider.Maximum = Math.Max(1, _items.Count); PositionSlider.Value = _index + 1; _syncingPosition = false; ResetShuffle(); ShowCurrent();
     }
-    private void ShowSkippingStatus(string destination) { _timer.Stop(); _animationCancellation?.Cancel(); Picture.Source = null; BackgroundPicture.Source = null; EmptyPanel.Visibility = Visibility.Visible; EmptyStatus.Visibility = Visibility.Visible; EmptyStatus.Text = $"지원되는 이미지를 찾지 못했습니다.\n{destination}"; Caption.Visibility = Visibility.Collapsed; BottomBar.Opacity = 0; }
+    private void ShowSkippingStatus(string destination)
+    {
+        _animationCancellation?.Cancel();
+        _loadVersion++;
+        LeaveSlideshowTransition();
+        _transitionInProgress = true;
+        SlideshowStateChanged?.Invoke();
+        Picture.Source = null; BackgroundPicture.Source = null; EmptyPanel.Visibility = Visibility.Visible; EmptyStatus.Visibility = Visibility.Visible; EmptyStatus.Text = $"지원되는 이미지를 찾지 못했습니다.\n{destination}"; Caption.Visibility = Visibility.Collapsed; BottomBar.Opacity = 0;
+    }
     private static List<ImageItem> ReadItems(IEnumerable<string> paths)
     {
         var result = new List<ImageItem>();
@@ -84,10 +102,25 @@ public partial class ImagePane : UserControl
         var path = paths[0]; if (Directory.Exists(path) || ArchiveExtensions.Contains(Path.GetExtension(path))) return Path.GetFullPath(path); return File.Exists(path) ? Path.GetDirectoryName(Path.GetFullPath(path)) : null;
     }
 
-    private async void ShowCurrent(int failureDirection = 1)
+    private async void ShowCurrent(int failureDirection = 1, SlideshowTransition? transition = null)
     {
-        if (!_isActive || _index < 0 || _index >= _items.Count) return; _timer.Stop(); _transitionInProgress = true; _animationCancellation?.Cancel(); _animationCancellation?.Dispose(); _animationCancellation = new CancellationTokenSource(); var token = _animationCancellation.Token; var version = ++_loadVersion; var item = _items[_index];
-        if (ActualWidth < 2 || ActualHeight < 2) { _transitionInProgress = false; return; }
+        if (_slideshowTransition != transition) LeaveSlideshowTransition();
+        _slideshowTransition = transition;
+        if (!_isActive || _index < 0 || _index >= _items.Count)
+        {
+            LeaveSlideshowTransition();
+            SlideshowStateChanged?.Invoke();
+            return;
+        }
+        _transitionInProgress = true;
+        SlideshowStateChanged?.Invoke();
+        _animationCancellation?.Cancel(); _animationCancellation?.Dispose(); _animationCancellation = new CancellationTokenSource(); var token = _animationCancellation.Token; var version = ++_loadVersion; var item = _items[_index];
+        if (ActualWidth < 2 || ActualHeight < 2)
+        {
+            LeaveSlideshowTransition();
+            _transitionInProgress = false;
+            return;
+        }
         _syncingPosition = true; PositionSlider.Value = _index + 1; PositionText.Text = $"{_index + 1} / {_items.Count}"; _syncingPosition = false; Caption.Visibility = Visibility.Visible; CaptionText.Text = $"불러오는 중…   {item.Name}";
         try
         {
@@ -95,12 +128,42 @@ public partial class ImagePane : UserControl
             if (IsAnimationCandidate(item))
             {
                 var encoded = await Task.Run(() => ReadEncodedItem(item), token); var frameCount = await Task.Run(() => GetFrameCount(encoded), token);
-                if (frameCount > 1) { if (version != _loadVersion) return; EmptyPanel.Visibility = Visibility.Collapsed; _ = Task.Run(() => PlayAnimationSafe(encoded, targetWidth, version, token, item.Name, failureDirection), token); return; }
+                if (frameCount > 1) { if (version != _loadVersion) return; _ = Task.Run(() => PlayAnimationSafeAsync(encoded, targetWidth, version, token, item.Name, failureDirection), token); return; }
             }
-            var bitmap = await Task.Run(() => DecodeBitmap(item, targetWidth)); if (version != _loadVersion) return; Picture.Source = bitmap; BackgroundPicture.Source = bitmap; EmptyPanel.Visibility = Visibility.Collapsed; CaptionText.Text = $"{item.Name}   {_index + 1} / {_items.Count}";
-            await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ContextIdle); if (version != _loadVersion) return; _transitionInProgress = false; ApplyInterval();
+            var bitmap = await Task.Run(() => DecodeBitmap(item, targetWidth), token);
+            if (version != _loadVersion) return;
+            await PresentFirstFrame(bitmap, item.Name, version);
         }
         catch (Exception) { if (version != _loadVersion) return; SkipUnreadableCurrent(failureDirection, item.Name); }
+    }
+
+    private Task PresentFirstFrame(BitmapSource frame, string itemName, int version)
+    {
+        void Present()
+        {
+            _slideshowTransition = null;
+            Picture.Source = frame;
+            BackgroundPicture.Source = frame;
+            EmptyPanel.Visibility = Visibility.Collapsed;
+            CaptionText.Text = $"{itemName}   {_index + 1} / {_items.Count}";
+            Dispatcher.InvokeAsync(() =>
+            {
+                if (version != _loadVersion) return;
+                _transitionInProgress = false;
+                SlideshowStateChanged?.Invoke();
+            }, DispatcherPriority.ContextIdle);
+        }
+
+        if (_slideshowTransition != null) return _slideshowTransition.Prepare(this, Present);
+        Present();
+        return Task.CompletedTask;
+    }
+
+    private void LeaveSlideshowTransition(bool presentPreparedFrame = false)
+    {
+        var transition = _slideshowTransition;
+        _slideshowTransition = null;
+        transition?.Withdraw(this, presentPreparedFrame);
     }
     private static bool IsAnimationCandidate(ImageItem item) { var ext = Path.GetExtension(item.ArchiveEntry ?? item.FilePath ?? item.Name); return ext.Equals(".gif", StringComparison.OrdinalIgnoreCase) || ext.Equals(".webp", StringComparison.OrdinalIgnoreCase); }
     private static byte[] ReadEncodedItem(ImageItem item)
@@ -110,19 +173,51 @@ public partial class ImagePane : UserControl
         var info = new FileInfo(item.FilePath!); if (info.Length > max) throw new InvalidDataException("애니메이션 파일이 256MB를 초과합니다."); return File.ReadAllBytes(item.FilePath!);
     }
     private static int GetFrameCount(byte[] encoded) { using var data = SKData.CreateCopy(encoded); using var codec = SKCodec.Create(data); return codec?.FrameInfo.Length ?? 0; }
-    private void PlayAnimation(byte[] encoded, int targetWidth, int version, CancellationToken token)
+    private async Task PlayAnimationAsync(byte[] encoded, int targetWidth, int version, CancellationToken token, string itemName)
     {
-        using var data = SKData.CreateCopy(encoded); using var codec = SKCodec.Create(data); if (codec == null) return; var frames = codec.FrameInfo; if (frames.Length < 2) return;
+        using var data = SKData.CreateCopy(encoded);
+        using var codec = SKCodec.Create(data) ?? throw new InvalidDataException("애니메이션을 읽을 수 없습니다.");
+        var frames = codec.FrameInfo;
+        if (frames.Length < 2) throw new InvalidDataException("애니메이션 프레임이 부족합니다.");
         var sourceInfo = new SKImageInfo(codec.Info.Width, codec.Info.Height, SKColorType.Bgra8888, SKAlphaType.Premul); using var decoded = new SKBitmap(sourceInfo); int outputWidth = Math.Min(sourceInfo.Width, Math.Max(1, targetWidth)); int outputHeight = Math.Max(1, (int)Math.Round(sourceInfo.Height * (outputWidth / (double)sourceInfo.Width))); using var output = new SKBitmap(new SKImageInfo(outputWidth, outputHeight, SKColorType.Bgra8888, SKAlphaType.Premul)); bool firstFrame = true;
         for (int frame = 0; !token.IsCancellationRequested; frame = (frame + 1) % frames.Length)
         {
-            if (!Dispatcher.Invoke(() => IsVisible)) { if (token.WaitHandle.WaitOne(100)) return; frame--; continue; }
+            if (!await Dispatcher.InvokeAsync(() => IsVisible, DispatcherPriority.Normal, token).Task.ConfigureAwait(false))
+            {
+                await Task.Delay(100, token).ConfigureAwait(false);
+                frame--;
+                continue;
+            }
             var options = frame == 0 ? new SKCodecOptions(0) : new SKCodecOptions(frame, frame - 1); var result = codec.GetPixels(sourceInfo, decoded.GetPixels(), decoded.RowBytes, options); if (result != SKCodecResult.Success && result != SKCodecResult.IncompleteInput) throw new InvalidDataException($"애니메이션 프레임 디코딩 실패: {result}");
             using (var canvas = new SKCanvas(output)) { canvas.Clear(SKColors.Transparent); canvas.DrawBitmap(decoded, new SKRect(0, 0, outputWidth, outputHeight), new SKSamplingOptions(SKFilterMode.Linear), null); canvas.Flush(); }
-            var source = BitmapSource.Create(outputWidth, outputHeight, 96, 96, PixelFormats.Bgra32, null, output.GetPixels(), output.RowBytes * outputHeight, output.RowBytes); source.Freeze(); Dispatcher.Invoke(() => { if (version != _loadVersion || token.IsCancellationRequested) return; Picture.Source = source; if (firstFrame) { firstFrame = false; BackgroundPicture.Source = source; EmptyPanel.Visibility = Visibility.Collapsed; Dispatcher.BeginInvoke(DispatcherPriority.ContextIdle, new Action(() => { if (version != _loadVersion || token.IsCancellationRequested) return; _transitionInProgress = false; ApplyInterval(); })); } }); if (token.WaitHandle.WaitOne(Math.Clamp(frames[frame].Duration, 20, 10_000))) return;
+            var source = BitmapSource.Create(outputWidth, outputHeight, 96, 96, PixelFormats.Bgra32, null, output.GetPixels(), output.RowBytes * outputHeight, output.RowBytes);
+            source.Freeze();
+            if (firstFrame)
+            {
+                firstFrame = false;
+                await Dispatcher.InvokeAsync(() => PresentFirstFrame(source, itemName, version), DispatcherPriority.Normal, token)
+                    .Task.Unwrap().WaitAsync(token).ConfigureAwait(false);
+            }
+            else
+            {
+                await Dispatcher.InvokeAsync(() => { Picture.Source = source; }, DispatcherPriority.Normal, token)
+                    .Task.ConfigureAwait(false);
+            }
+            await Task.Delay(Math.Clamp(frames[frame].Duration, 20, 10_000), token).ConfigureAwait(false);
         }
     }
-    private void PlayAnimationSafe(byte[] encoded, int targetWidth, int version, CancellationToken token, string itemName, int failureDirection) { try { PlayAnimation(encoded, targetWidth, version, token); } catch (OperationCanceledException) { } catch (Exception) { Dispatcher.Invoke(() => { if (version != _loadVersion || token.IsCancellationRequested) return; SkipUnreadableCurrent(failureDirection, itemName); }); } }
+    private async Task PlayAnimationSafeAsync(byte[] encoded, int targetWidth, int version, CancellationToken token, string itemName, int failureDirection)
+    {
+        try { await PlayAnimationAsync(encoded, targetWidth, version, token, itemName).ConfigureAwait(false); }
+        catch (OperationCanceledException) { }
+        catch (Exception)
+        {
+            await Dispatcher.InvokeAsync(() =>
+            {
+                if (version == _loadVersion && !token.IsCancellationRequested) SkipUnreadableCurrent(failureDirection, itemName);
+            }).Task.ConfigureAwait(false);
+        }
+    }
     private static BitmapImage DecodeBitmap(ImageItem item, int targetWidth)
     {
         Stream? source = null; ZipArchive? archive = null; MemoryStream? buffered = null; string? tempPath = null;
@@ -135,28 +230,38 @@ public partial class ImagePane : UserControl
         finally { source?.Dispose(); buffered?.Dispose(); archive?.Dispose(); if (tempPath != null) try { File.Delete(tempPath); } catch { } }
     }
 
-    private void Next() { if (_items.Count == 0) return; if (ShuffleToggle.IsChecked == true) { if (_shuffleBag.Count == 0) ResetShuffle(); _index = _shuffleBag.Dequeue(); } else _index = (_index + 1) % _items.Count; ShowCurrent(1); }
+    private void Next(SlideshowTransition? transition = null) { if (_items.Count == 0) return; if (ShuffleToggle.IsChecked == true) { if (_shuffleBag.Count == 0) ResetShuffle(); _index = _shuffleBag.Dequeue(); } else _index = (_index + 1) % _items.Count; ShowCurrent(1, transition); }
+    internal void AdvanceSlideshow(SlideshowTransition transition) => Next(transition);
     private void Previous() { if (_items.Count == 0) return; _index = (_index - 1 + _items.Count) % _items.Count; ShowCurrent(-1); }
     public void NavigateFromSynchronization(int direction) { if (!_isActive) return; if (direction < 0) Previous(); else Next(); }
     private void SkipUnreadableCurrent(int direction, string failedName)
     {
-        _timer.Stop(); _transitionInProgress = false; var failedIndex = _index; _items.RemoveAt(failedIndex);
+        var failedIndex = _index; _items.RemoveAt(failedIndex);
         var shifted = _shuffleBag.Where(index => index != failedIndex).Select(index => index > failedIndex ? index - 1 : index).ToArray(); _shuffleBag.Clear(); foreach (var index in shifted) _shuffleBag.Enqueue(index);
         if (_items.Count == 0)
         {
             _index = -1; Picture.Source = null; BackgroundPicture.Source = null; EmptyPanel.Visibility = Visibility.Visible; EmptyStatus.Visibility = Visibility.Visible; EmptyStatus.Text = $"열 수 있는 이미지가 없습니다.\n마지막 실패 항목: {failedName}"; Caption.Visibility = Visibility.Collapsed; BottomBar.Opacity = 0;
-            _syncingPosition = true; PositionSlider.Minimum = 1; PositionSlider.Maximum = 1; PositionSlider.Value = 1; PositionText.Text = "0 / 0"; _syncingPosition = false; return;
+            _syncingPosition = true; PositionSlider.Minimum = 1; PositionSlider.Maximum = 1; PositionSlider.Value = 1; PositionText.Text = "0 / 0"; _syncingPosition = false;
+            _transitionInProgress = false;
+            LeaveSlideshowTransition();
+            SlideshowStateChanged?.Invoke();
+            return;
         }
         _syncingPosition = true; PositionSlider.Maximum = _items.Count; _syncingPosition = false; CaptionText.Text = $"손상되었거나 지원되지 않는 이미지를 건너뜁니다…   {failedName}";
-        if (ShuffleToggle.IsChecked == true && direction > 0) { if (_shuffleBag.Count > 0) _index = _shuffleBag.Dequeue(); else { _index = _random.Next(_items.Count); ResetShuffle(); } ShowCurrent(1); return; }
-        _index = direction < 0 ? (failedIndex - 1 + _items.Count) % _items.Count : failedIndex % _items.Count; ShowCurrent(direction);
+        if (ShuffleToggle.IsChecked == true && direction > 0) { if (_shuffleBag.Count > 0) _index = _shuffleBag.Dequeue(); else { _index = _random.Next(_items.Count); ResetShuffle(); } ShowCurrent(1, _slideshowTransition); return; }
+        _index = direction < 0 ? (failedIndex - 1 + _items.Count) % _items.Count : failedIndex % _items.Count; ShowCurrent(direction, _slideshowTransition);
     }
     private void Pane_PreviewMouseWheel(object sender, MouseWheelEventArgs e) { if (_items.Count == 0) return; if (e.Delta > 0) Previous(); else if (e.Delta < 0) Next(); e.Handled = true; }
     private void ResetShuffle() { _shuffleBag.Clear(); foreach (var i in Enumerable.Range(0, _items.Count).Where(i => i != _index).OrderBy(_ => _random.Next())) _shuffleBag.Enqueue(i); if (_items.Count == 1) _shuffleBag.Enqueue(0); }
     private void RemoveFromShuffleBag(int index) { if (_shuffleBag.Count == 0) return; var remaining = _shuffleBag.Where(i => i != index).ToArray(); _shuffleBag.Clear(); foreach (var i in remaining) _shuffleBag.Enqueue(i); }
-    private void ApplyInterval() { var seconds = (int)IntervalSlider.Value; _timer.Stop(); if (_isActive && !_transitionInProgress && seconds > 0 && _items.Count > 1) { _timer.Interval = TimeSpan.FromSeconds(seconds); _timer.Start(); } }
-    private void Interval_Changed(object sender, RoutedPropertyChangedEventArgs<double> e) { if (_syncing || SecondsBox == null) return; _syncing = true; SecondsBox.Text = ((int)e.NewValue).ToString(); _syncing = false; ApplyInterval(); }
-    private void SetSeconds(int value) { _syncing = true; value = Math.Clamp(value, 0, 60); IntervalSlider.Value = value; SecondsBox.Text = value.ToString(); _syncing = false; ApplyInterval(); }
+    private void Interval_Changed(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (SecondsBox == null) return;
+        if (!_syncing) SecondsBox.Text = ((int)e.NewValue).ToString();
+        LeaveSlideshowTransition(presentPreparedFrame: true);
+        SlideshowStateChanged?.Invoke();
+    }
+    private void SetSeconds(int value) { _syncing = true; value = Math.Clamp(value, 0, 60); IntervalSlider.Value = value; SecondsBox.Text = value.ToString(); _syncing = false; }
     public void SetSecondsFromSynchronization(int value) => SetSeconds(value);
     private void Seconds_LostFocus(object sender, RoutedEventArgs e) => SetSeconds(int.TryParse(SecondsBox.Text, out var n) ? n : 0);
     private void Seconds_PreviewTextInput(object sender, TextCompositionEventArgs e) => e.Handled = !e.Text.All(char.IsDigit);
@@ -176,10 +281,13 @@ public partial class ImagePane : UserControl
     private void Previous_Click(object sender, RoutedEventArgs e) { if ((Keyboard.Modifiers & ModifierKeys.Control) != 0) NavigateAllRequested?.Invoke(this, -1); else Previous(); }
     private void Clear_Click(object sender, RoutedEventArgs e)
     {
-        _timer.Stop(); _animationCancellation?.Cancel(); _animationCancellation?.Dispose(); _animationCancellation = null; _loadVersion++;
+        _animationCancellation?.Cancel(); _animationCancellation?.Dispose(); _animationCancellation = null; _loadVersion++;
+        LeaveSlideshowTransition();
         _items.Clear(); _shuffleBag.Clear(); _index = -1; _sourcePath = null; Picture.Source = null; BackgroundPicture.Source = null;
         EmptyPanel.Visibility = Visibility.Visible; EmptyStatus.Visibility = Visibility.Collapsed; Caption.Visibility = Visibility.Collapsed; ClearButton.Visibility = Visibility.Collapsed; ClearButton.Opacity = 0; ClearButton.IsHitTestVisible = false; BottomBar.Opacity = 0;
         _syncingPosition = true; PositionSlider.Minimum = 1; PositionSlider.Maximum = 1; PositionSlider.Value = 1; PositionText.Text = "0 / 0"; _syncingPosition = false;
+        _transitionInProgress = false;
+        SlideshowStateChanged?.Invoke();
     }
     private async void PreviousSource_RightClick(object sender, MouseButtonEventArgs e) { e.Handled = true; await MoveSourceAsync(-1); } private async void NextSource_RightClick(object sender, MouseButtonEventArgs e) { e.Handled = true; await MoveSourceAsync(1); }
     private async Task MoveSourceAsync(int direction)
@@ -216,5 +324,9 @@ public partial class ImagePane : UserControl
         PositionText.MinWidth = narrow ? 44 : 60;
         PositionText.Margin = narrow ? new Thickness(0, 0, 2, 0) : new Thickness(0, 0, 6, 0);
         BottomBar.Padding = narrow ? new Thickness(5) : new Thickness(8);
+        if (ActualWidth >= 2 && ActualHeight >= 2 && (e.PreviousSize.Width < 2 || e.PreviousSize.Height < 2) && _items.Count > 0 && _isActive)
+            ShowCurrent();
+        else if (ActualWidth < 2 || ActualHeight < 2)
+            SlideshowStateChanged?.Invoke();
     }
 }

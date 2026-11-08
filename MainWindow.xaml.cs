@@ -4,20 +4,74 @@ using System.Windows.Input;
 using System.Windows.Interop;
 using System.Runtime.InteropServices;
 using System.IO;
+using System.Windows.Threading;
 
 namespace ImageViewer;
 
 public partial class MainWindow : Window
 {
     private readonly ImagePane[] _panes = Enumerable.Range(0, 8).Select(_ => new ImagePane()).ToArray();
-    private readonly System.Windows.Threading.DispatcherTimer _hideTimer = new() { Interval = TimeSpan.FromMilliseconds(900) };
+    private readonly DispatcherTimer _hideTimer = new() { Interval = TimeSpan.FromMilliseconds(900) };
+    private readonly DispatcherTimer _slideshowTimer = new();
+    private readonly Dictionary<int, long> _slideshowDeadlines = new();
     private bool _fullscreen; private WindowState _stateBeforeFullscreen; private Rect _boundsBeforeFullscreen;
     public MainWindow()
     {
-        InitializeComponent(); foreach (var pane in _panes) { pane.SynchronizeIntervalRequested += SynchronizeIntervals; pane.SynchronizeShuffleRequested += SynchronizeShuffle; pane.NavigateAllRequested += NavigateAllPanes; }
+        InitializeComponent(); foreach (var pane in _panes) { pane.SynchronizeIntervalRequested += SynchronizeIntervals; pane.SynchronizeShuffleRequested += SynchronizeShuffle; pane.NavigateAllRequested += NavigateAllPanes; pane.SlideshowStateChanged += ScheduleSlideshow; }
+        _slideshowTimer.Tick += (_, _) => AdvanceSlideshows();
+        Closed += (_, _) =>
+        {
+            _slideshowTimer.Stop();
+            foreach (var pane in _panes)
+            {
+                pane.SlideshowStateChanged -= ScheduleSlideshow;
+                pane.SetActive(false);
+            }
+        };
         _hideTimer.Tick += (_, _) => { _hideTimer.Stop(); LayoutBar.Opacity = 0; }; SetLayout(1);
     }
-    private void SynchronizeIntervals(ImagePane source, int seconds) { foreach (var pane in _panes) if (!ReferenceEquals(pane, source)) pane.SetSecondsFromSynchronization(seconds); }
+    private void SynchronizeIntervals(ImagePane source, int seconds)
+    {
+        foreach (var pane in _panes) if (!ReferenceEquals(pane, source)) pane.SetSecondsFromSynchronization(seconds);
+        _slideshowDeadlines.Remove(seconds);
+        ScheduleSlideshow();
+    }
+
+    private void ScheduleSlideshow()
+    {
+        _slideshowTimer.Stop();
+        var now = Environment.TickCount64;
+        var readyGroups = _panes.Where(pane => pane.SlideshowSeconds > 0)
+            .GroupBy(pane => pane.SlideshowSeconds)
+            .Where(group => group.All(pane => pane.IsSlideshowReady))
+            .ToArray();
+
+        foreach (var seconds in _slideshowDeadlines.Keys.ToArray())
+            if (!readyGroups.Any(group => group.Key == seconds)) _slideshowDeadlines.Remove(seconds);
+
+        foreach (var group in readyGroups)
+            _slideshowDeadlines.TryAdd(group.Key, now + group.Key * 1000L);
+
+        if (_slideshowDeadlines.Count == 0) return;
+        _slideshowTimer.Interval = TimeSpan.FromMilliseconds(Math.Max(1, _slideshowDeadlines.Values.Min() - now));
+        _slideshowTimer.Start();
+    }
+
+    private void AdvanceSlideshows()
+    {
+        var now = Environment.TickCount64;
+        var dueGroups = _panes.GroupBy(pane => pane.SlideshowSeconds)
+            .Where(group => _slideshowDeadlines.TryGetValue(group.Key, out var deadline) && deadline <= now)
+            .ToArray();
+
+        foreach (var group in dueGroups)
+        {
+            _slideshowDeadlines.Remove(group.Key);
+            var transition = new SlideshowTransition(group);
+            foreach (var pane in group) pane.AdvanceSlideshow(transition);
+        }
+        ScheduleSlideshow();
+    }
     private void SynchronizeShuffle(ImagePane source, bool enabled) { foreach (var pane in _panes) if (!ReferenceEquals(pane, source)) pane.SetShuffleFromSynchronization(enabled); }
     private void NavigateAllPanes(ImagePane source, int direction) { foreach (var pane in _panes) pane.NavigateFromSynchronization(direction); }
     public Task OpenPathsAsync(IEnumerable<string> paths) => _panes[0].LoadPathsAsync(paths);
